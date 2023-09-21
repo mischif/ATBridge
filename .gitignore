@@ -1,0 +1,8 @@
+# Backup files
+*.*~
+
+# Don't accidentally commit your wifi password
+configs/wireless.conf
+
+# Don't accidentally commit your SMB credentials
+configs/smb.creds

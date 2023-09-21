@@ -1,0 +1,72 @@
+#!/usr/sbin/nft -f
+
+################################################################################
+##        ______  ______  ____                   __                           ##
+##       /\  _  \/\__  _\/\  _`\          __    /\ \                          ##
+##       \ \ \L\ \/_/\ \/\ \ \L\ \  _ __ /\_\   \_\ \     __      __          ##
+##        \ \  __ \ \ \ \ \ \  _ <'/\`'__\/\ \  /'_` \  /'_ `\  /'__`\        ##
+##         \ \ \/\ \ \ \ \ \ \ \L\ \ \ \/ \ \ \/\ \L\ \/\ \L\ \/\  __/        ##
+##          \ \_\ \_\ \ \_\ \ \____/\ \_\  \ \_\ \___,_\ \____ \ \____\       ##
+##           \/_/\/_/  \/_/  \/___/  \/_/   \/_/\/__,_ /\/___L\ \/____/       ##
+##                                                        /\____/             ##
+##                                                        \_/__/              ##
+##                                                                            ##
+##          Proxy SMB shares from modern servers to decrepit clients          ##
+##                              (C) 2023 Mischif                              ##
+##                           Published under AGPLv3                           ##
+################################################################################
+
+# Step -1: Set prefixes and labels
+
+define CLIENT_ADDR = 172.17.2.172
+define LAN = eth0
+define WAN = wlan0
+
+# Step 0: Flush all old rules
+
+flush ruleset
+
+# Step 1: Construct new ruleset framework
+
+create table main
+add chain main input {type filter hook input priority 0; policy drop;}
+add chain main output {type filter hook output priority 0; policy drop;}
+add chain main proxy {type filter hook prerouting priority -150; policy accept;}
+add chain main prerouting {type nat hook prerouting priority -100; policy accept;}
+add chain main postrouting {type nat hook postrouting priority 100; policy accept;}
+
+# Step 2: Set baseline firewall rules
+add rule main input iif $WAN udp sport {bootpc, netbios-ns, netbios-dgm} drop
+add rule main input ct state invalid drop
+add rule main input ct state {established, related} accept
+add rule main output ct state invalid drop
+add rule main output ct state {established, related} accept
+
+# Step 3: Handle loopback traffic
+add rule main input iif lo accept
+add rule main output oif lo accept
+
+# Step 4: Handle DHCP requests
+# Apparently this is superfluous as DHCP packets do not go through the normal
+# network stack, and thus are not filtered by firewalls.
+# https://serverfault.com/questions/191390/iptables-and-dhcp-questions
+add rule main input iif $LAN udp sport bootpc udp dport bootps accept
+add rule main output oif $LAN udp sport bootps udp dport bootpc accept
+
+# Step 5: Handle allowed UDP traffic
+add rule main output oif $WAN udp dport domain accept
+
+# Step 6: Handle client -> ATBridge traffic
+add rule main input iif $LAN tcp dport netbios-ssn accept
+add rule main input iif $LAN udp dport {domain, netbios-ns, netbios-dgm} accept
+add rule main input iif $LAN ip protocol icmp accept
+
+# Step 7: Handle ATBridge -> internet traffic
+add rule main output oif $WAN tcp dport microsoft-ds accept
+
+# Step 8: Handle ATBridge -> client traffic
+add rule main output oif $LAN udp sport {domain, netbios-ns, netbios-dgm} accept
+
+# Step 9: Handle internet -> client traffic
+add rule main prerouting tcp dport http dnat to $CLIENT_ADDR
+add rule main prerouting tcp dport https dnat to $CLIENT_ADDR
